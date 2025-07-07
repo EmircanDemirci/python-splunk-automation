@@ -1,56 +1,48 @@
-#!/usr/bin/python3
+import streamlit as st
+from sigma.rule import SigmaRule
+from sigma.collection import SigmaCollection
+from sigma.backends.splunk import SplunkBackend
 import yaml
-import splunklib.client as client
-import splunklib.results as results
 
-# === [1] Sigma YAML -> Splunk Search convert === #
-yaml_path = "Enter YAML file path"
-output_path = "Enter output file path."
+st.set_page_config(page_title="Sigma to Splunk", layout="wide")
+st.title("Sigma → Splunk Query Converter")
+st.text("by venoox")
 
-# Read Sigma YAML and parse
-with open(yaml_path, "r") as f:
-    sigma_rule = yaml.safe_load(f)
+sigma_input = st.text_area("Sigma Kuralını Yapıştır", height=300, help="YAML formatında Sigma kuralını buraya yapıştırın")
 
-# detection -> selection -> Message|contains
-conditions = sigma_rule.get("detection", {}).get("selection", {})
-field = "Message"
-terms = conditions.get("Message|contains", [])
+if st.button("Splunk Query Oluştur"):
+    if not sigma_input.strip():
+        st.warning("Lütfen bir Sigma kuralı girin.")
+    else:
+        try:
+            # Parse the YAML input
+            sigma_dict = yaml.safe_load(sigma_input) #converts to dict like {"logsource":...,"detection":....}
+            
+            # Create SigmaRule object
+            sigma_rule = SigmaRule.from_dict(sigma_dict)
 
-# Create Splunk Query
-source = 'source="WinEventLog:Microsoft-Windows-PowerShell/Operational"'
-index = 'index=*'
-splunk_conditions = " OR ".join([f'{field}="*{term}*"' for term in terms])
-query = f"{index} {source} AND (({splunk_conditions})) | table {field}"
+            # Create SigmaCollection with the rule
+            collection = SigmaCollection([sigma_rule])
+            
+            # Create Splunk backend
+            backend = SplunkBackend() #this is a class for convert
+            
+            # Convert collection to Splunk queries
+            queries = backend.convert(collection) #converting sigma to spl
+            
+            # Display results
+            st.success("✅ Sigma kuralı başarıyla Splunk sorgusuna dönüştürüldü!")
+            
+            for i, query in enumerate(queries, 1): #getting query with index like this -> 1 query \n 2 query
+                st.subheader(f"Splunk Query {i}:")
+                st.code(query, language='splunk')
+                
+                # Add copy to clipboard functionality using st.text_area (readonly)
+                st.text_area(f"Query {i}:", value=str(query), height=100, key=f"copy_area_{i}")
 
-# Write to the file
-with open(output_path, "w") as f:
-    f.write(query)
-
-# === [2] Write splunk search results === #
-# Connection information
-HOST = "localhost"
-PORT = 8089
-USERNAME = "Enter splunk admin username"
-PASSWORD = "Enter splunk admin password"
-
-# Connect Splunk
-service = client.connect(
-    host=HOST,
-    port=PORT,
-    username=USERNAME,
-    password=PASSWORD
-)
-
-# Read from file and output
-with open(output_path, "r") as f:
-    search_query = "search " + f.read().strip()
-
-search_options = {"earliest_time": "@d"}
-results_stream = service.jobs.oneshot(search_query, **search_options)
-reader = results.ResultsReader(results_stream)
-
-# Results
-print("\n--- Splunk Results ---")
-for result in reader:
-    if isinstance(result, dict):
-        print(f"{field}: {result.get(field)}")
+        except yaml.YAMLError as e:
+            st.error(f"YAML parse hatası: {str(e)}")
+        except Exception as e:
+            st.error(f"Hata oluştu: {str(e)}")
+            st.error("Lütfen Sigma kuralının doğru YAML formatında olduğundan emin olun.")
+            
