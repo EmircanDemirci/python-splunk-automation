@@ -11,6 +11,7 @@ import urllib.request
 import json
 import re
 import time
+import uuid
 
 # Logging yapılandırması
 logging.basicConfig(level=logging.INFO)
@@ -95,6 +96,29 @@ class SigmaSearchResponse(BaseModel):
     message: str
     found_rule: Optional[Dict[str, Any]] = None
     search_stats: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = {}
+
+# UUID kontrol modelleri
+class UUIDCheckRequest(BaseModel):
+    value: str
+    metadata: Dict[str, Any] = {}
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "value": "7efd2c8d-8b18-45b7-947d-adfe9ed04f61",
+                "metadata": {
+                    "request_id": "uuid-check-123",
+                    "user": "analyst"
+                }
+            }
+        }
+
+class UUIDCheckResponse(BaseModel):
+    is_valid_uuid: bool
+    message: str
+    value: str
+    uuid_version: Optional[int] = None
     metadata: Dict[str, Any] = {}
 
 # GitHub'dan dosya listesi alma fonksiyonu
@@ -452,6 +476,59 @@ async def convert_batch_sigma_to_splunk(requests: List[SigmaConvertRequest]):
             results.append(error_response)
     
     return results
+
+# UUID kontrol endpoint'i
+@app.post("/is-uuid", response_model=UUIDCheckResponse)
+async def is_uuid_endpoint(request: UUIDCheckRequest):
+    """
+    Gelen değerin geçerli bir UUID olup olmadığını kontrol et
+    
+    Args:
+        request: UUIDCheckRequest - Kontrol edilecek değer ve metadata
+        
+    Returns:
+        UUIDCheckResponse - UUID geçerliliği ve detay bilgileri
+    """
+    
+    logger.info(f"UUID kontrol isteği: {request.value}")
+    
+    try:
+        # UUID kontrolü yap
+        parsed_uuid = uuid.UUID(request.value)
+        
+        # UUID versiyonunu belirle
+        uuid_version = parsed_uuid.version
+        
+        logger.info(f"Geçerli UUID bulundu: {request.value} (Version: {uuid_version})")
+        
+        return UUIDCheckResponse(
+            is_valid_uuid=True,
+            message=f"Geçerli UUID (Version {uuid_version})",
+            value=request.value,
+            uuid_version=uuid_version,
+            metadata=request.metadata
+        )
+        
+    except ValueError as e:
+        logger.info(f"Geçersiz UUID: {request.value} - {str(e)}")
+        
+        return UUIDCheckResponse(
+            is_valid_uuid=False,
+            message=f"Geçersiz UUID formatı: {str(e)}",
+            value=request.value,
+            uuid_version=None,
+            metadata=request.metadata
+        )
+    except Exception as e:
+        logger.error(f"UUID kontrol hatası: {str(e)}")
+        
+        return UUIDCheckResponse(
+            is_valid_uuid=False,
+            message=f"UUID kontrol sırasında hata: {str(e)}",
+            value=request.value,
+            uuid_version=None,
+            metadata=request.metadata
+        )
 
 # Supported backends listesi
 @app.get("/backends")

@@ -302,6 +302,79 @@ def test_backends_endpoint():
         print(f"❌ Backends endpoint hatası: {e}")
     print("-" * 50)
 
+def test_uuid_endpoint():
+    """UUID kontrol endpoint'ini test et"""
+    print("🔄 UUID kontrol endpoint testi...")
+    
+    # Test veri setleri
+    test_cases = [
+        {
+            "value": "7efd2c8d-8b18-45b7-947d-adfe9ed04f61",
+            "expected": True,
+            "description": "Geçerli UUID v4"
+        },
+        {
+            "value": "550e8400-e29b-41d4-a716-446655440000", 
+            "expected": True,
+            "description": "Geçerli UUID v1"
+        },
+        {
+            "value": "invalid-uuid-format",
+            "expected": False,
+            "description": "Geçersiz UUID formatı"
+        },
+        {
+            "value": "12345",
+            "expected": False,
+            "description": "Sayı - UUID değil"
+        },
+        {
+            "value": "",
+            "expected": False,
+            "description": "Boş string"
+        }
+    ]
+    
+    for i, test_case in enumerate(test_cases, 1):
+        print(f"\n📋 Test {i}: {test_case['description']}")
+        
+        payload = {
+            "value": test_case["value"],
+            "metadata": {
+                "test_case": i,
+                "description": test_case["description"]
+            }
+        }
+        
+        try:
+            response = requests.post(
+                f"{BASE_URL}/is-uuid",
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                is_valid = data["is_valid_uuid"]
+                
+                if is_valid == test_case["expected"]:
+                    print(f"✅ Test başarılı!")
+                    print(f"   Sonuç: {data['message']}")
+                    if data.get('uuid_version'):
+                        print(f"   UUID Version: {data['uuid_version']}")
+                else:
+                    print(f"❌ Test başarısız!")
+                    print(f"   Beklenen: {test_case['expected']}, Alınan: {is_valid}")
+                    print(f"   Mesaj: {data['message']}")
+            else:
+                print(f"❌ HTTP Hatası: {response.status_code}")
+                print(f"   Response: {response.text}")
+                
+        except Exception as e:
+            print(f"❌ Test hatası: {e}")
+    
+    print("-" * 50)
+
 def main():
     """Ana test fonksiyonu"""
     print("🚀 Sigma to Splunk API Test Başlatılıyor...")
@@ -311,6 +384,7 @@ def main():
     test_health_check()
     test_example_endpoint()
     test_backends_endpoint()
+    test_uuid_endpoint()
     test_list_files_endpoint()
     test_search_sigma_endpoint()
     test_search_and_convert_endpoint()

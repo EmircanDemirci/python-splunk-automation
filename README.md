@@ -53,6 +53,7 @@ streamlit run streamlit_app.py
 | `/search-sigma` | POST | ID'ye göre Sigma kural arama |
 | `/search-and-convert` | POST | Kural arama + dönüştürme |
 | `/list-sigma-files` | GET | GitHub'daki Sigma dosyalarını listele |
+| `/is-uuid` | POST | UUID geçerlilik kontrolü |
 | `/example` | GET | Örnek Sigma kuralı al |
 | `/backends` | GET | Desteklenen backend'leri listele |
 | `/docs` | GET | API dokümantasyonu (Swagger UI) |
@@ -144,7 +145,49 @@ curl -X GET "http://localhost:8000/list-sigma-files"
 }
 ```
 
-### 4. Tekil Dönüştürme (Geleneksel)
+### 4. UUID Geçerlilik Kontrolü
+
+```bash
+curl -X POST "http://localhost:8000/is-uuid" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "value": "7efd2c8d-8b18-45b7-947d-adfe9ed04f61",
+    "metadata": {
+      "request_id": "uuid-check-001",
+      "user": "analyst"
+    }
+  }'
+```
+
+**Response (Geçerli UUID):**
+```json
+{
+  "is_valid_uuid": true,
+  "message": "Geçerli UUID (Version 4)",
+  "value": "7efd2c8d-8b18-45b7-947d-adfe9ed04f61",
+  "uuid_version": 4,
+  "metadata": {
+    "request_id": "uuid-check-001",
+    "user": "analyst"
+  }
+}
+```
+
+**Response (Geçersiz UUID):**
+```json
+{
+  "is_valid_uuid": false,
+  "message": "Geçersiz UUID formatı: badly formed hexadecimal UUID string",
+  "value": "invalid-uuid-format",
+  "uuid_version": null,
+  "metadata": {
+    "request_id": "uuid-check-001",
+    "user": "analyst"
+  }
+}
+```
+
+### 5. Tekil Dönüştürme (Geleneksel)
 
 ```bash
 curl -X POST "http://localhost:8000/convert" \
@@ -158,7 +201,7 @@ curl -X POST "http://localhost:8000/convert" \
   }'
 ```
 
-### 5. Python ile Kullanım
+### 6. Python ile Kullanım
 
 ```python
 import requests
@@ -187,20 +230,35 @@ def list_sigma_files():
     response = requests.get(f"{api_url}/list-sigma-files")
     return response.json()
 
+# 4. UUID geçerlilik kontrolü
+def check_uuid(value):
+    response = requests.post(f"{api_url}/is-uuid", json={
+        "value": value,
+        "metadata": {"user": "analyst", "operation": "uuid_check"}
+    })
+    return response.json()
+
 # Örnek kullanım
 rule_id = "7efd2c8d-8b18-45b7-947d-adfe9ed04f61"
 
-# Sadece kural arama
-search_result = search_sigma_rule(rule_id)
-if search_result['success']:
-    print(f"Bulunan dosya: {search_result['found_rule']['filename']}")
-    print(f"İçerik: {search_result['found_rule']['content'][:200]}...")
+# UUID geçerliliği kontrol et
+uuid_result = check_uuid(rule_id)
+if uuid_result['is_valid_uuid']:
+    print(f"✅ Geçerli UUID (Version {uuid_result['uuid_version']})")
+    
+    # Sadece kural arama
+    search_result = search_sigma_rule(rule_id)
+    if search_result['success']:
+        print(f"Bulunan dosya: {search_result['found_rule']['filename']}")
+        print(f"İçerik: {search_result['found_rule']['content'][:200]}...")
 
-# Arama ve dönüştürme
-combined_result = search_and_convert(rule_id)
-if combined_result['success']:
-    splunk_query = combined_result['conversion_result']['queries'][0]
-    print(f"Splunk Query: {splunk_query}")
+    # Arama ve dönüştürme
+    combined_result = search_and_convert(rule_id)
+    if combined_result['success']:
+        splunk_query = combined_result['conversion_result']['queries'][0]
+        print(f"Splunk Query: {splunk_query}")
+else:
+    print(f"❌ Geçersiz UUID: {uuid_result['message']}")
 ```
 
 ## 🧪 Test Etme
@@ -249,6 +307,29 @@ Bu script tüm endpoint'leri test eder ve sonuçları gösterir.
 }
 ```
 
+### UUIDCheckRequest (Yeni)
+```json
+{
+  "value": "string (Kontrol edilecek UUID)",
+  "metadata": {
+    "request_id": "string",
+    "user": "string",
+    "custom_field": "any"
+  }
+}
+```
+
+### UUIDCheckResponse (Yeni)
+```json
+{
+  "is_valid_uuid": "boolean",
+  "message": "string",
+  "value": "string",
+  "uuid_version": "number | null",
+  "metadata": "object"
+}
+```
+
 ### SigmaConvertRequest
 ```json
 {
@@ -282,7 +363,17 @@ Bu script tüm endpoint'leri test eder ve sonuçları gösterir.
 
 ### Senaryo 1: n8n İş Akışı Entegrasyonu
 ```bash
-# n8n'den gelen Sigma ID'si ile kural arama ve dönüştürme
+# 1. Önce UUID geçerliliğini kontrol et
+POST /is-uuid
+{
+  "value": "{{$node['Webhook'].json['sigma_id']}}",
+  "metadata": {
+    "workflow_id": "{{$execution.id}}",
+    "step": "uuid_validation"
+  }
+}
+
+# 2. UUID geçerliyse kural arama ve dönüştürme
 POST /search-and-convert
 {
   "target_id": "{{$node['Webhook'].json['sigma_id']}}",
@@ -315,6 +406,48 @@ process_creation_files = [
     f for f in files['files'] 
     if 'process_creation' in f['name']
 ]
+```
+
+### Senaryo 4: UUID Doğrulama ile Güvenli İş Akışı
+```python
+# Güvenli Sigma işleme pipeline'ı
+def safe_sigma_processing(input_id):
+    # 1. UUID doğrulama
+    uuid_check = check_uuid(input_id)
+    if not uuid_check['is_valid_uuid']:
+        return {
+            "error": "invalid_uuid",
+            "message": f"Geçersiz UUID: {uuid_check['message']}"
+        }
+    
+    print(f"✅ UUID geçerli (Version {uuid_check['uuid_version']})")
+    
+    # 2. Güvenli arama ve dönüştürme
+    try:
+        result = search_and_convert(input_id)
+        if result['success']:
+            return {
+                "success": True,
+                "splunk_query": result['conversion_result']['queries'][0],
+                "sigma_file": result['search_result']['found_rule']['filename']
+            }
+        else:
+            return {
+                "error": "rule_not_found",
+                "message": result['message']
+            }
+    except Exception as e:
+        return {
+            "error": "processing_failed",
+            "message": str(e)
+        }
+
+# Kullanım
+result = safe_sigma_processing("7efd2c8d-8b18-45b7-947d-adfe9ed04f61")
+if "error" not in result:
+    print(f"Splunk Query: {result['splunk_query']}")
+else:
+    print(f"Hata: {result['message']}")
 ```
 
 ## 🛠️ Hata Ayıklama
