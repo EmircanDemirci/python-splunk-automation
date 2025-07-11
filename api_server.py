@@ -121,6 +121,19 @@ class UUIDCheckResponse(BaseModel):
     uuid_version: Optional[int] = None
     metadata: Dict[str, Any] = {}
 
+# Basit UUID request modeli (kullanıcının eklediği)
+class UUIDRequest(BaseModel):
+    value: str
+
+# Internal UUID kontrol fonksiyonu (helper)
+def is_valid_uuid(value: str) -> bool:
+    """Internal helper: String'in geçerli UUID olup olmadığını kontrol eder"""
+    try:
+        uuid.UUID(value)
+        return True
+    except ValueError:
+        return False
+
 # GitHub'dan dosya listesi alma fonksiyonu
 def get_github_files(repo_path: str = "rules/windows/process_creation"):
     """GitHub API'sini kullanarak dosya listesi al"""
@@ -293,9 +306,19 @@ async def search_sigma_rule(request: SigmaSearchRequest):
     
     # Timeout kontrolü için başlangıç zamanı
     start_time = time.time()
-    timeout_seconds = 5
+    timeout_seconds = 60
     
     try:
+        # Önce target_id'nin geçerli UUID olup olmadığını kontrol et
+        if not is_valid_uuid(request.target_id.strip()):
+            return SigmaSearchResponse(
+                success=False,
+                message=f"Geçersiz UUID formatı: {request.target_id}",
+                found_rule=None,
+                search_stats={"target_id": request.target_id, "error": "invalid_uuid"},
+                metadata=request.metadata
+            )
+        
         # GitHub'dan dosya listesi al
         files = get_github_files()
         
@@ -324,7 +347,7 @@ async def search_sigma_rule(request: SigmaSearchRequest):
                 )
             
             try:
-                result = download_and_check_file(file_info, request.target_id)
+                result = download_and_check_file(file_info, request.target_id.strip())
                 search_stats["searched_files"] += 1
                 
                 if result:
@@ -476,6 +499,16 @@ async def convert_batch_sigma_to_splunk(requests: List[SigmaConvertRequest]):
             results.append(error_response)
     
     return results
+
+# Basit UUID kontrol endpoint'i (kullanıcının eklediği)
+@app.post("/check-uuid")
+def check_is_uuid(request: UUIDRequest):
+    """Basit UUID kontrol endpoint'i"""
+    try:
+        uuid.UUID(request.value)
+        return {"is_uuid": True, "sigmatext": request.value}
+    except ValueError:
+        return {"is_uuid": False, "sigmatext": request.value}
 
 # UUID kontrol endpoint'i
 @app.post("/is-uuid", response_model=UUIDCheckResponse)
