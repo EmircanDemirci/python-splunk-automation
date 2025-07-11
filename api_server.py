@@ -5,8 +5,11 @@ from sigma.rule import SigmaRule
 from sigma.collection import SigmaCollection
 from sigma.backends.splunk import SplunkBackend
 import yaml
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
+import urllib.request
+import json
+import re
 
 # Logging yapılandırması
 logging.basicConfig(level=logging.INFO)
@@ -15,7 +18,7 @@ logger = logging.getLogger(__name__)
 # FastAPI uygulaması oluştur
 app = FastAPI(
     title="Sigma to Splunk Converter API",
-    description="Sigma kurallarını Splunk sorgularına dönüştüren REST API",
+    description="Sigma kurallarını Splunk sorgularına dönüştüren ve GitHub'dan Sigma kuralları arayan REST API",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -61,6 +64,22 @@ level: medium""",
             }
         }
 
+# Sigma search request modeli
+class SigmaSearchRequest(BaseModel):
+    target_id: str
+    metadata: Dict[str, Any] = {}
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "target_id": "7efd2c8d-8b18-45b7-947d-adfe9ed04f61",
+                "metadata": {
+                    "request_id": "search-123",
+                    "user": "analyst"
+                }
+            }
+        }
+
 # Response modeli
 class SigmaConvertResponse(BaseModel):
     success: bool
@@ -68,6 +87,74 @@ class SigmaConvertResponse(BaseModel):
     queries: List[str] = []
     rule_info: Dict[str, Any] = {}
     metadata: Dict[str, Any] = {}
+
+# Sigma search response modeli
+class SigmaSearchResponse(BaseModel):
+    success: bool
+    message: str
+    found_rule: Optional[Dict[str, Any]] = None
+    search_stats: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = {}
+
+# GitHub'dan dosya listesi alma fonksiyonu
+def get_github_files(repo_path: str = "rules/windows/process_creation"):
+    """GitHub API'sini kullanarak dosya listesi al"""
+    api_url = f"https://api.github.com/repos/SigmaHQ/sigma/contents/{repo_path}"
+    
+    try:
+        with urllib.request.urlopen(api_url) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            
+        files = []
+        for item in data:
+            if item['type'] == 'file' and item['name'].endswith('.yml'):
+                files.append({
+                    "name": item['name'],
+                    "download_url": item['download_url'],
+                    "size": item['size']
+                })
+        
+        return files
+    except Exception as e:
+        logger.error(f"GitHub API hatası: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"GitHub'dan dosya listesi alınamadı: {str(e)}"
+        )
+
+# Sigma kuralında ID arama fonksiyonu
+def extract_id_from_content(content: str) -> Optional[str]:
+    """Sigma kural içeriğinden ID'yi çıkar"""
+    for line in content.splitlines():
+        line = line.strip()
+        if line.startswith("id:"):
+            # ID'yi çıkar (yml formatında olabilir)
+            id_part = line.split("id:")[1].strip()
+            # Tırnak işaretlerini ve boşlukları temizle
+            id_part = id_part.strip('\'"').strip()
+            return id_part
+    return None
+
+# Dosya indirme ve analiz fonksiyonu
+def download_and_check_file(file_info: Dict[str, Any], target_id: str) -> Optional[Dict[str, Any]]:
+    """Dosyayı indir ve target ID'yi ara"""
+    try:
+        with urllib.request.urlopen(file_info["download_url"]) as response:
+            content = response.read().decode("utf-8")
+            
+        current_id = extract_id_from_content(content)
+        if current_id and current_id.lower() == target_id.lower():
+            return {
+                "filename": file_info["name"],
+                "download_url": file_info["download_url"],
+                "content": content,
+                "id": current_id,
+                "file_size": file_info.get("size", 0)
+            }
+    except Exception as e:
+        logger.warning(f"Dosya indirilemedi {file_info['name']}: {str(e)}")
+    
+    return None
 
 # Health check endpoint
 @app.get("/health")
@@ -162,6 +249,142 @@ async def convert_sigma_to_splunk(request: SigmaConvertRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Sunucu hatası: {str(e)}"
+        )
+
+# Sigma kural arama endpoint'i
+@app.post("/search-sigma", response_model=SigmaSearchResponse)
+async def search_sigma_rule(request: SigmaSearchRequest):
+    """
+    GitHub'dan Sigma kurallarını çekip ID'ye göre arama yap
+    
+    Args:
+        request: SigmaSearchRequest - Aranacak ID ve metadata
+        
+    Returns:
+        SigmaSearchResponse - Bulunan kural bilgileri
+    """
+    
+    logger.info(f"Sigma kural arama isteği: {request.target_id}")
+    
+    try:
+        # GitHub'dan dosya listesi al
+        files = get_github_files()
+        
+        search_stats = {
+            "total_files": len(files),
+            "searched_files": 0,
+            "skipped_files": 0,
+            "target_id": request.target_id
+        }
+        
+        found_rule = None
+        
+        # Her dosyayı kontrol et
+        for file_info in files:
+            try:
+                result = download_and_check_file(file_info, request.target_id)
+                search_stats["searched_files"] += 1
+                
+                if result:
+                    found_rule = result
+                    logger.info(f"Kural bulundu: {file_info['name']}")
+                    break
+                    
+            except Exception as e:
+                search_stats["skipped_files"] += 1
+                logger.warning(f"Dosya atlandı {file_info['name']}: {str(e)}")
+                continue
+        
+        if found_rule:
+            return SigmaSearchResponse(
+                success=True,
+                message=f"Kural bulundu: {found_rule['filename']}",
+                found_rule=found_rule,
+                search_stats=search_stats,
+                metadata=request.metadata
+            )
+        else:
+            return SigmaSearchResponse(
+                success=False,
+                message=f"ID '{request.target_id}' ile eşleşen kural bulunamadı",
+                found_rule=None,
+                search_stats=search_stats,
+                metadata=request.metadata
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Arama sırasında hata: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Arama hatası: {str(e)}"
+        )
+
+# Sigma arama ve dönüştürme kombinasyonu
+@app.post("/search-and-convert")
+async def search_and_convert_sigma(request: SigmaSearchRequest):
+    """
+    Sigma kuralını ID'ye göre bul ve Splunk sorgusuna dönüştür
+    
+    Args:
+        request: SigmaSearchRequest - Aranacak ID ve metadata
+        
+    Returns:
+        Combined response - Bulunan kural ve Splunk sorgusu
+    """
+    
+    # Önce kuralı ara
+    search_result = await search_sigma_rule(request)
+    
+    if not search_result.success or not search_result.found_rule:
+        return {
+            "success": False,
+            "message": search_result.message,
+            "search_result": search_result.dict(),
+            "conversion_result": None
+        }
+    
+    # Bulunan kuralı dönüştür
+    try:
+        convert_request = SigmaConvertRequest(
+            sigma_rule=search_result.found_rule["content"],
+            metadata=request.metadata
+        )
+        
+        conversion_result = await convert_sigma_to_splunk(convert_request)
+        
+        return {
+            "success": True,
+            "message": f"Kural bulundu ve başarıyla dönüştürüldü",
+            "search_result": search_result.dict(),
+            "conversion_result": conversion_result.dict()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Kural bulundu ancak dönüştürülemedi: {str(e)}",
+            "search_result": search_result.dict(),
+            "conversion_result": None
+        }
+
+# GitHub dosya listesi endpoint'i
+@app.get("/list-sigma-files")
+async def list_sigma_files():
+    """GitHub'daki Sigma dosyalarının listesini döndür"""
+    try:
+        files = get_github_files()
+        return {
+            "success": True,
+            "message": f"{len(files)} dosya bulundu",
+            "files": files,
+            "total_count": len(files)
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Dosya listesi alınamadı: {str(e)}"
         )
 
 # Batch dönüştürme endpoint'i

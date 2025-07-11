@@ -40,6 +40,124 @@ def test_example_endpoint():
         print(f"❌ Example endpoint hatası: {e}")
     print("-" * 50)
 
+def test_list_files_endpoint():
+    """List Sigma files endpoint'ini test et"""
+    print("🔄 List Sigma files testi...")
+    try:
+        response = requests.get(f"{BASE_URL}/list-sigma-files")
+        if response.status_code == 200:
+            print("✅ List files endpoint başarılı!")
+            data = response.json()
+            print(f"📁 Bulunan dosya sayısı: {data.get('total_count', 0)}")
+            if data.get('files'):
+                print(f"📋 İlk birkaç dosya:")
+                for i, file in enumerate(data['files'][:3]):
+                    print(f"  {i+1}. {file['name']} ({file['size']} bytes)")
+        else:
+            print(f"❌ List files endpoint başarısız: {response.status_code}")
+            print(f"Error: {response.text}")
+    except Exception as e:
+        print(f"❌ List files endpoint hatası: {e}")
+    print("-" * 50)
+
+def test_search_sigma_endpoint():
+    """Search Sigma endpoint'ini test et"""
+    print("🔄 Search Sigma endpoint testi...")
+    
+    # Bilinen bir Sigma ID'si ile test (gerçek bir ID olması gerekiyor)
+    # Bu ID'yi list-sigma-files endpoint'inden alınan gerçek bir dosyadan alabiliriz
+    test_id = "7efd2c8d-8b18-45b7-947d-adfe9ed04f61"  # Örnek ID
+    
+    payload = {
+        "target_id": test_id,
+        "metadata": {
+            "request_id": "search-test-123",
+            "user": "test_user",
+            "timestamp": int(time.time())
+        }
+    }
+    
+    try:
+        response = requests.post(
+            f"{BASE_URL}/search-sigma",
+            json=payload,
+            headers={"Content-Type": "application/json"}
+        )
+        
+        if response.status_code == 200:
+            print("✅ Search Sigma endpoint başarılı!")
+            data = response.json()
+            print(f"📊 Arama sonucu: {data['message']}")
+            
+            if data['success'] and data.get('found_rule'):
+                found_rule = data['found_rule']
+                print(f"📄 Bulunan dosya: {found_rule['filename']}")
+                print(f"🆔 ID: {found_rule['id']}")
+                print(f"📐 Dosya boyutu: {found_rule['file_size']} bytes")
+                print(f"📝 İçerik önizleme: {found_rule['content'][:200]}...")
+            
+            stats = data.get('search_stats', {})
+            print(f"\n📈 Arama istatistikleri:")
+            print(f"  - Toplam dosya: {stats.get('total_files', 0)}")
+            print(f"  - Aranan dosya: {stats.get('searched_files', 0)}")
+            print(f"  - Atlanan dosya: {stats.get('skipped_files', 0)}")
+                
+        else:
+            print(f"❌ Search Sigma endpoint başarısız: {response.status_code}")
+            print(f"Error: {response.text}")
+            
+    except Exception as e:
+        print(f"❌ Search Sigma endpoint hatası: {e}")
+    print("-" * 50)
+
+def test_search_and_convert_endpoint():
+    """Search and convert endpoint'ini test et"""
+    print("🔄 Search and Convert endpoint testi...")
+    
+    # Bilinen bir Sigma ID'si ile test
+    test_id = "7efd2c8d-8b18-45b7-947d-adfe9ed04f61"
+    
+    payload = {
+        "target_id": test_id,
+        "metadata": {
+            "request_id": "search-convert-123",
+            "user": "test_user",
+            "timestamp": int(time.time())
+        }
+    }
+    
+    try:
+        response = requests.post(
+            f"{BASE_URL}/search-and-convert",
+            json=payload,
+            headers={"Content-Type": "application/json"}
+        )
+        
+        if response.status_code == 200:
+            print("✅ Search and Convert endpoint başarılı!")
+            data = response.json()
+            print(f"📊 Sonuç: {data['message']}")
+            
+            if data['success']:
+                search_result = data.get('search_result', {})
+                conversion_result = data.get('conversion_result', {})
+                
+                if search_result.get('found_rule'):
+                    print(f"🔍 Bulunan dosya: {search_result['found_rule']['filename']}")
+                
+                if conversion_result and conversion_result.get('queries'):
+                    print(f"🔧 Dönüştürülen sorgu sayısı: {len(conversion_result['queries'])}")
+                    print(f"📋 İlk Splunk sorgusu:")
+                    print(f"```\n{conversion_result['queries'][0]}\n```")
+                
+        else:
+            print(f"❌ Search and Convert endpoint başarısız: {response.status_code}")
+            print(f"Error: {response.text}")
+            
+    except Exception as e:
+        print(f"❌ Search and Convert endpoint hatası: {e}")
+    print("-" * 50)
+
 def test_convert_endpoint():
     """Convert endpoint'ini test et"""
     print("🔄 Convert endpoint testi...")
@@ -193,6 +311,9 @@ def main():
     test_health_check()
     test_example_endpoint()
     test_backends_endpoint()
+    test_list_files_endpoint()
+    test_search_sigma_endpoint()
+    test_search_and_convert_endpoint()
     test_convert_endpoint()
     test_batch_convert()
     
