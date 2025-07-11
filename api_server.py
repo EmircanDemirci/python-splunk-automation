@@ -10,6 +10,7 @@ import logging
 import urllib.request
 import json
 import re
+import time
 
 # Logging yapılandırması
 logging.basicConfig(level=logging.INFO)
@@ -266,6 +267,10 @@ async def search_sigma_rule(request: SigmaSearchRequest):
     
     logger.info(f"Sigma kural arama isteği: {request.target_id}")
     
+    # Timeout kontrolü için başlangıç zamanı
+    start_time = time.time()
+    timeout_seconds = 5
+    
     try:
         # GitHub'dan dosya listesi al
         files = get_github_files()
@@ -274,20 +279,33 @@ async def search_sigma_rule(request: SigmaSearchRequest):
             "total_files": len(files),
             "searched_files": 0,
             "skipped_files": 0,
-            "target_id": request.target_id
+            "target_id": request.target_id,
+            "timeout_seconds": timeout_seconds
         }
         
         found_rule = None
         
         # Her dosyayı kontrol et
         for file_info in files:
+            # Timeout kontrolü
+            elapsed_time = time.time() - start_time
+            if elapsed_time > timeout_seconds:
+                logger.warning(f"Arama timeout'a uğradı: {elapsed_time:.2f} saniye")
+                search_stats["timeout"] = True
+                search_stats["elapsed_time"] = elapsed_time
+                
+                raise HTTPException(
+                    status_code=status.HTTP_408_REQUEST_TIMEOUT,
+                    detail=f"Arama işlemi {timeout_seconds} saniye timeout'ına uğradı. {search_stats['searched_files']}/{search_stats['total_files']} dosya tarandı."
+                )
+            
             try:
                 result = download_and_check_file(file_info, request.target_id)
                 search_stats["searched_files"] += 1
                 
                 if result:
                     found_rule = result
-                    logger.info(f"Kural bulundu: {file_info['name']}")
+                    logger.info(f"Kural bulundu: {file_info['name']} ({elapsed_time:.2f} saniyede)")
                     break
                     
             except Exception as e:
@@ -295,10 +313,15 @@ async def search_sigma_rule(request: SigmaSearchRequest):
                 logger.warning(f"Dosya atlandı {file_info['name']}: {str(e)}")
                 continue
         
+        # Toplam süre bilgisi
+        total_elapsed = time.time() - start_time
+        search_stats["elapsed_time"] = total_elapsed
+        search_stats["timeout"] = False
+        
         if found_rule:
             return SigmaSearchResponse(
                 success=True,
-                message=f"Kural bulundu: {found_rule['filename']}",
+                message=f"Kural bulundu: {found_rule['filename']} ({total_elapsed:.2f} saniyede)",
                 found_rule=found_rule,
                 search_stats=search_stats,
                 metadata=request.metadata
@@ -306,7 +329,7 @@ async def search_sigma_rule(request: SigmaSearchRequest):
         else:
             return SigmaSearchResponse(
                 success=False,
-                message=f"ID '{request.target_id}' ile eşleşen kural bulunamadı",
+                message=f"ID '{request.target_id}' ile eşleşen kural bulunamadı ({total_elapsed:.2f} saniyede, {search_stats['searched_files']} dosya tarandı)",
                 found_rule=None,
                 search_stats=search_stats,
                 metadata=request.metadata
