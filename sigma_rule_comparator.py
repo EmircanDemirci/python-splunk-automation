@@ -105,6 +105,69 @@ class SigmaRuleComparator:
         recursive_extract(detection_dict)
         return list(fields), values
 
+    def is_meaningful_match(self, s1, s2, score):
+        """Eşleşmenin anlamlı olup olmadığını kontrol et"""
+        s1_clean = str(s1).lower().strip()
+        s2_clean = str(s2).lower().strip()
+        
+        # Boş stringler
+        if not s1_clean or not s2_clean:
+            return False
+        
+        min_length = min(len(s1_clean), len(s2_clean))
+        max_length = max(len(s1_clean), len(s2_clean))
+        
+        # Çok kısa stringler için sıkı kontrol (3 karakter altı)
+        if min_length < 3:
+            # Baştan eşleşme varsa kabul et
+            if s1_clean.startswith(s2_clean) or s2_clean.startswith(s1_clean):
+                return score > 0.6
+            # Kısa string uzun stringin içindeyse ve baştan eşleşmiyorsa suspicious
+            if max_length > 5:
+                return False
+            # İkisi de çok kısaysa sadece tam eşleşmeyi kabul et
+            return s1_clean == s2_clean
+            
+        # Length ratio kontrolü - çok farklı uzunluklardaysa skip et
+        length_ratio = min_length / max_length if max_length > 0 else 0
+        if length_ratio < 0.4:  # Biri diğerinin %40'ından kısaysa
+            return False
+            
+        # Kısa substring eşleşmelerini filtrele
+        if min_length <= 5:
+            # Baştan eşleşme varsa kabul et (daha gevşek kontrol)
+            if s1_clean.startswith(s2_clean) or s2_clean.startswith(s1_clean):
+                return score > 0.5  # Baştan eşleşmelerde daha düşük threshold
+            else:
+                # Baştan eşleşme yoksa sıkı kontrol
+                if score < 0.85:
+                    return False
+                # Ve mutlaka tam substring olmalı
+                if not (s1_clean in s2_clean or s2_clean in s1_clean):
+                    return False
+                
+        # Orta uzunlukta stringler için (6-10 karakter)
+        elif min_length <= 10:
+            if score < 0.6:
+                return False
+        
+        # Uzun stringler için daha esnek olabiliriz
+        else:
+            if score < 0.5:
+                return False
+        
+        # Son kontrol: Anagram benzeri durumlar (urtlfef vs rtf)
+        # Eğer karakterler çok benzer ama kelime başlangıçları farklıysa suspicious
+        if score > 0.5 and score < 0.8:
+            s1_chars = set(s1_clean)
+            s2_chars = set(s2_clean)
+            char_overlap = len(s1_chars & s2_chars) / max(len(s1_chars), len(s2_chars))
+            
+            if char_overlap > 0.7 and s1_clean[0] != s2_clean[0]:
+                return False
+        
+        return True
+
     def fuzzy_similarity(self, strings1, strings2):
         """İki string listesi arasındaki benzerliği hesapla (kelime/sayı benzerliği cezası dahil)"""
         # Input'ları liste haline getir
@@ -141,6 +204,10 @@ class SigmaRuleComparator:
                         penalty = 0.3  # ceza uygula
 
                 combined_score = max(0.0, min(1.0, fuzzy_score + substring_bonus - penalty))
+                
+                # Anlamlı eşleşme kontrolü - saçma eşleşmeleri filtrele
+                if not self.is_meaningful_match(s1, s2, combined_score):
+                    combined_score = 0.0
 
                 if combined_score > best_score:
                     best_score = combined_score
@@ -237,7 +304,7 @@ class SigmaRuleComparator:
             print(f"   🔍 MongoDB Values: {match['mongo_values'][:5]}...")
 
             # En iyi value eşleşmelerini göster
-            if match['value_similarity'] > 0.3:  # Anlamlı benzerlik varsa
+            if match['value_similarity'] > 0.4:  # Daha yüksek threshold
                 print("   🎯 En İyi Value Eşleşmeleri:")
                 for yaml_val in yaml_values[:3]:  # İlk 3 YAML value
                     best_match = ""
@@ -248,7 +315,7 @@ class SigmaRuleComparator:
                             best_score = score
                             best_match = mongo_val
 
-                    if best_score > 0.3:
+                    if best_score > 0.5:  # Daha yüksek threshold - sadece gerçekten iyi eşleşmeleri göster
                         print(f"      '{yaml_val}' ↔ '{best_match}' ({best_score:.1%})")
 
             print("-" * 60)
