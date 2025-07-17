@@ -31,6 +31,45 @@ class SigmaRuleComparator:
         except ValueError:
             return False
 
+    def clean_value(self, value):
+        """Value'lardan dosya uzantılarını ve gereksiz karakterleri temizle"""
+        if not isinstance(value, str):
+            return str(value)
+        
+        # Dosya uzantılarını kaldır (executable, script, archive, document formats)
+        file_extensions = [
+            # Executable files
+            '.exe', '.dll', '.sys', '.drv', '.ocx', '.cpl', '.scr', '.com', '.pif',
+            # Script files  
+            '.bat', '.cmd', '.ps1', '.psm1', '.psd1', '.vbs', '.vbe', '.js', '.jse',
+            '.wsh', '.wsf', '.hta', '.py', '.pl', '.php', '.rb', '.sh',
+            # Archive files
+            '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.cab', '.msi',
+            # Document files
+            '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.rtf',
+            # Log and config files
+            '.txt', '.log', '.cfg', '.conf', '.ini', '.xml', '.json', '.yaml', '.yml',
+            # Image files
+            '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.ico', '.svg',
+            # Other common files
+            '.tmp', '.temp', '.bak', '.old', '.orig'
+        ]
+        
+        cleaned_value = value.lower().strip()
+        
+        # Uzantıları kaldır
+        for ext in file_extensions:
+            if cleaned_value.endswith(ext):
+                cleaned_value = cleaned_value[:-len(ext)]
+                break
+        
+        # Gereksiz karakterleri temizle
+        cleaned_value = re.sub(r'[\\\/\'"]+', '', cleaned_value)  # Path separators ve quotes
+        cleaned_value = re.sub(r'\s+', ' ', cleaned_value)  # Çoklu boşlukları tek boşluğa çevir
+        cleaned_value = cleaned_value.strip()
+        
+        return cleaned_value if cleaned_value else value  # Eğer tamamen boş kaldıysa orijinalini döndür
+
     def extract_detection_components(self, detection_dict):
         """Detection bölümünden field'ları ve değerleri ayrı ayrı çıkar"""
         fields = set()
@@ -46,11 +85,15 @@ class SigmaRuleComparator:
                     fields.add(key)
 
                     if isinstance(value, (str, int, float)):
-                        values.append(str(value))
+                        cleaned_val = self.clean_value(str(value))
+                        if cleaned_val:  # Boş değilse ekle
+                            values.append(cleaned_val)
                     elif isinstance(value, list):
                         for item in value:
                             if isinstance(item, (str, int, float)):
-                                values.append(str(item))
+                                cleaned_val = self.clean_value(str(item))
+                                if cleaned_val:  # Boş değilse ekle
+                                    values.append(cleaned_val)
                             elif isinstance(item, dict):
                                 recursive_extract(item, key)
                     elif isinstance(value, dict):

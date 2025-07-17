@@ -11,6 +11,7 @@ logsource:
 detection:
     selection:
         Image|endswith: '\powershell.exe'
+        ParentImage|endswith: '\cmd.exe'
         CommandLine|contains:
             - '-EncodedCommand'
             - '-enc'
@@ -20,6 +21,8 @@ detection:
             - 'Invoke-Expression'
             - 'bypass'
             - '-windowstyle hidden'
+            - 'malware.exe'
+            - 'evil.dll'
     condition: selection
 falsepositives:
     - Legitimate PowerShell automation scripts
