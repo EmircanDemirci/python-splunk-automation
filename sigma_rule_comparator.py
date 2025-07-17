@@ -306,16 +306,25 @@ class SigmaRuleComparator:
             # En iyi value eşleşmelerini göster
             if match['value_similarity'] > 0.4:  # Daha yüksek threshold
                 print("   🎯 En İyi Value Eşleşmeleri:")
+                shown_matches = set()  # Tekrar eden eşleşmeleri engelle
+                
                 for yaml_val in yaml_values[:3]:  # İlk 3 YAML value
                     best_match = ""
                     best_score = 0.0
+                    
                     for mongo_val in match['mongo_values']:
                         score = self.fuzzy_similarity([str(yaml_val)], [str(mongo_val)])
-                        if score > best_score:
+                        # Anlamlı eşleşme kontrolü ekle
+                        if score > best_score and self.is_meaningful_match(yaml_val, mongo_val, score):
                             best_score = score
                             best_match = mongo_val
 
-                    if best_score > 0.5:  # Daha yüksek threshold - sadece gerçekten iyi eşleşmeleri göster
+                    # Sadece gerçekten iyi ve benzersiz eşleşmeleri göster
+                    match_key = f"{yaml_val}↔{best_match}"
+                    if (best_score > 0.6 and  # Daha yüksek threshold
+                        match_key not in shown_matches and  # Tekrar kontrolü
+                        best_match):  # Boş değil
+                        shown_matches.add(match_key)
                         print(f"      '{yaml_val}' ↔ '{best_match}' ({best_score:.1%})")
 
             print("-" * 60)
