@@ -70,6 +70,60 @@ class SigmaRuleComparator:
         
         return cleaned_value if cleaned_value else value  # Eğer tamamen boş kaldıysa orijinalini döndür
 
+    def clean_field(self, field):
+        """Field isimlerinden gereksiz Sigma yapılarını temizle"""
+        if not isinstance(field, str):
+            return str(field)
+        
+        # Temizlenecek field prefixleri ve suffixleri
+        field_patterns_to_remove = [
+            # Sigma detection yapıları
+            'selection', 'filter', 'condition', 'timeframe',
+            # Selection varyantları  
+            'selection_', 'sel_', 'select_',
+            # Filter varyantları
+            'filter_', 'filt_', 'exclude_',
+            # Diğer yaygın Sigma yapıları
+            'keywords', 'keyword_', 'pattern_', 'rule_',
+            'detection_', 'detect_', 'match_', 'search_',
+            # Suffix'ler için
+            '_selection', '_filter', '_condition', '_rule'
+        ]
+        
+        cleaned_field = field.lower().strip()
+        
+        # Önce sayısal suffix'leri kaldır (selection1, filter2 gibi)
+        cleaned_field = re.sub(r'_?\d+$', '', cleaned_field)
+        
+        # Prefix'leri kaldır
+        for pattern in field_patterns_to_remove:
+            if pattern.endswith('_'):  # Prefix pattern
+                if cleaned_field.startswith(pattern):
+                    cleaned_field = cleaned_field[len(pattern):]
+                    break  # İlk eşleşmede dur
+            elif pattern.startswith('_'):  # Suffix pattern  
+                if cleaned_field.endswith(pattern):
+                    cleaned_field = cleaned_field[:-len(pattern)]
+                    break  # İlk eşleşmede dur
+            else:  # Tam eşleşme
+                if cleaned_field == pattern:
+                    return ""  # Tamamen gereksiz field, boş döndür
+        
+        # Pipe characters ve modifiers'ı temizle (Image|endswith → image)
+        if '|' in cleaned_field:
+            cleaned_field = cleaned_field.split('|')[0]
+        
+        # Wildcard ve regex karakterlerini temizle
+        cleaned_field = re.sub(r'[\*\?\[\]{}()^$|\\]', '', cleaned_field)
+        
+        # Birden fazla underscore'u tek underscore'a çevir
+        cleaned_field = re.sub(r'_+', '_', cleaned_field)
+        
+        # Başındaki ve sonundaki underscore'ları kaldır
+        cleaned_field = cleaned_field.strip('_')
+        
+        return cleaned_field if cleaned_field else field  # Eğer tamamen boş kaldıysa orijinalini döndür
+
     def extract_detection_components(self, detection_dict):
         """Detection bölümünden field'ları ve değerleri ayrı ayrı çıkar"""
         fields = set()
@@ -81,8 +135,10 @@ class SigmaRuleComparator:
                     if key == 'condition':  # condition'ı skip et
                         continue
 
-                    # Field ismini ekle
-                    fields.add(key)
+                    # Field ismini temizle ve ekle
+                    cleaned_field = self.clean_field(key)
+                    if cleaned_field:  # Boş değilse ekle
+                        fields.add(cleaned_field)
 
                     if isinstance(value, (str, int, float)):
                         cleaned_val = self.clean_value(str(value))
