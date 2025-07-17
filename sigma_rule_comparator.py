@@ -119,9 +119,19 @@ class SigmaRuleComparator:
         
         # Çok kısa stringler için sıkı kontrol (3 karakter altı)
         if min_length < 3:
-            # Baştan eşleşme varsa kabul et
-            if s1_clean.startswith(s2_clean) or s2_clean.startswith(s1_clean):
-                return score > 0.6
+            # Tek karakterli stringler için özel kurallar
+            if min_length == 1:
+                # Tek karakter sadece kendisiyle tam eşleşirse kabul edilir
+                return s1_clean == s2_clean
+            
+            # 2 karakterli stringler için
+            if min_length == 2:
+                # Baştan eşleşme varsa ve score yüksekse kabul et
+                if s1_clean.startswith(s2_clean) or s2_clean.startswith(s1_clean):
+                    return score > 0.8  # Çok yüksek threshold
+                # Tam eşleşme dışında kabul etme
+                return s1_clean == s2_clean
+            
             # Kısa string uzun stringin içindeyse ve baştan eşleşmiyorsa suspicious
             if max_length > 5:
                 return False
@@ -133,11 +143,11 @@ class SigmaRuleComparator:
         if length_ratio < 0.4:  # Biri diğerinin %40'ından kısaysa
             return False
             
-        # Kısa substring eşleşmelerini filtrele
-        if min_length <= 5:
+        # Kısa substring eşleşmelerini filtrele (3-5 karakter)
+        if min_length <= 5 and min_length >= 3:
             # Baştan eşleşme varsa kabul et (daha gevşek kontrol)
             if s1_clean.startswith(s2_clean) or s2_clean.startswith(s1_clean):
-                return score > 0.5  # Baştan eşleşmelerde daha düşük threshold
+                return score > 0.6  # Baştan eşleşmelerde makul threshold
             else:
                 # Baştan eşleşme yoksa sıkı kontrol
                 if score < 0.85:
@@ -190,8 +200,18 @@ class SigmaRuleComparator:
 
                 fuzzy_score = SequenceMatcher(None, s1_clean, s2_clean).ratio()
 
-                # Substring bonus
-                substring_bonus = 0.2 if s1_clean in s2_clean or s2_clean in s1_clean else 0.0
+                # Akıllı substring bonus - sadece anlamlı durumlarda ver
+                substring_bonus = 0.0
+                if s1_clean in s2_clean or s2_clean in s1_clean:
+                    min_len = min(len(s1_clean), len(s2_clean))
+                    max_len = max(len(s1_clean), len(s2_clean))
+                    
+                    # Sadece uzunluk oranı makul ise bonus ver
+                    length_ratio = min_len / max_len if max_len > 0 else 0
+                    if length_ratio >= 0.5:  # En az %50 uzunluk oranı olmalı
+                        substring_bonus = 0.1  # Daha düşük bonus
+                    elif length_ratio >= 0.3:  # Orta seviye
+                        substring_bonus = 0.05  # Çok düşük bonus
 
                 # Kelime/sayı ortaklığı varsa ve substring değilse -> ceza
                 penalty = 0.0
