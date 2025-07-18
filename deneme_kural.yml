@@ -1,0 +1,42 @@
+title: Suspicious PowerShell Command Execution
+id: 12345678-1234-1234-1234-123456789012
+description: Detects suspicious PowerShell command execution patterns that may indicate malicious activity
+author: Security Team
+date: 2024/01/15
+references:
+    - https://attack.mitre.org/techniques/T1059/001/
+tags:
+    - attack.execution
+    - attack.t1059.001
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_powershell:
+        Image|endswith: '\powershell.exe'
+    selection_suspicious_commands:
+        CommandLine|contains:
+            - 'Invoke-Expression'
+            - 'DownloadString'
+            - 'DownloadFile'
+            - 'WebClient'
+            - 'System.Net'
+            - 'hidden'
+            - 'bypass'
+            - 'noprofile'
+            - 'encodedcommand'
+    selection_obfuscation:
+        CommandLine|contains:
+            - 'base64'
+            - 'frombase64string'
+            - 'compressed'
+            - 'invoke'
+    filter_legitimate:
+        ParentImage|endswith:
+            - '\explorer.exe'
+            - '\wmiprvse.exe'
+    condition: selection_powershell and (selection_suspicious_commands or selection_obfuscation) and not filter_legitimate
+falsepositives:
+    - Legitimate PowerShell scripts used by administrators
+    - Automated software deployment
+level: high
