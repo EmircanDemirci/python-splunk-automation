@@ -82,69 +82,50 @@ class SigmaHQComparator:
             logger.error(f"❌ YAML text parse edilemedi: {e}")
             return {}
 
-    def format_rule_for_ai(self, rule: Dict[str, Any]) -> str:
-        """Sigma kuralını AI için optimize edilmiş formatta hazırla"""
-        formatted_parts = []
+    def format_detection_for_ai(self, rule: Dict[str, Any]) -> str:
+        """Sadece detection mantığını AI için hazırla (basit ve odaklı)"""
         
-        # Başlık ve açıklama
-        if 'title' in rule:
-            formatted_parts.append(f"TITLE: {rule['title']}")
-        if 'description' in rule:
-            formatted_parts.append(f"DESCRIPTION: {rule['description']}")
+        if 'detection' not in rule:
+            return "DETECTION: None"
         
-        # MITRE ATT&CK tags
-        if 'tags' in rule:
-            tags = rule['tags'] if isinstance(rule['tags'], list) else [rule['tags']]
-            formatted_parts.append(f"MITRE_TAGS: {', '.join(tags)}")
+        detection = rule['detection']
+        detection_yaml = yaml.dump(detection, default_flow_style=False, indent=2)
         
-        # Seviye
-        if 'level' in rule:
-            formatted_parts.append(f"LEVEL: {rule['level']}")
+        # Sadece detection + kısa açıklama
+        title = rule.get('title', 'Unknown Rule')
         
-        # Detection mantığı - en önemli kısım
-        if 'detection' in rule:
-            formatted_parts.append("DETECTION_LOGIC:")
-            detection_yaml = yaml.dump(rule['detection'], default_flow_style=False, indent=2)
-            formatted_parts.append(detection_yaml)
-        
-        # Log source
-        if 'logsource' in rule:
-            formatted_parts.append("LOG_SOURCE:")
-            logsource_yaml = yaml.dump(rule['logsource'], default_flow_style=False, indent=2)
-            formatted_parts.append(logsource_yaml)
-        
-        return "\n".join(formatted_parts)
+        return f"RULE: {title}\nDETECTION:\n{detection_yaml}"
 
-    def calculate_content_similarity(self, input_rule: Dict[str, Any], sigmahq_rule: Dict[str, Any]) -> float:
-        """İki Sigma kuralı arasındaki içerik benzerliğini AI ile hesapla"""
+    def calculate_detection_similarity(self, input_rule: Dict[str, Any], sigmahq_rule: Dict[str, Any]) -> float:
+        """İki Sigma kuralının detection benzerliğini AI ile hesapla (sadece detection odaklı)"""
         
-        input_text = self.format_rule_for_ai(input_rule)
-        sigmahq_text = self.format_rule_for_ai(sigmahq_rule)
+        input_detection = self.format_detection_for_ai(input_rule)
+        sigmahq_detection = self.format_detection_for_ai(sigmahq_rule)
         
         prompt = f"""
-İki Sigma güvenlik kuralının içerik benzerliğini analiz et ve 0.0-1.0 arasında bir skor ver.
+İki Sigma kuralının DETECTION mantığını karşılaştır ve 0.0-1.0 arasında benzerlik skoru ver.
 
-Değerlendirme kriterleri:
-- Detection mantığı benzerliği (en önemli - %50)
-- MITRE ATT&CK teknik benzerliği (%20)
-- Log source benzerliği (%15)
-- Saldırı türü/amaç benzerliği (%15)
+SADECE DETECTION mantığına odaklan:
+- Field isimleri (Image, CommandLine, EventID, vb.)
+- Field değerleri (powershell.exe, cmd.exe, vb.) 
+- Condition mantığı (selection, filter, vb.)
+- Detection yapısı (selection1, selection2, vb.)
 
 Benzerlik seviyeleri:
-1.0 = Neredeyse identik kurallar
-0.8-0.9 = Aynı saldırı tekniğini farklı şekilde tespit ediyor
-0.6-0.7 = Benzer saldırı kategorisi, farklı implementation
-0.4-0.5 = Aynı MITRE technique, farklı yaklaşım
-0.2-0.3 = Aynı log source, farklı amaç
-0.0-0.1 = Tamamen farklı
+1.0 = Neredeyse aynı detection mantığı
+0.8-0.9 = Aynı field'ları kullanıyor, benzer değerler
+0.6-0.7 = Benzer field'lar, farklı değerler
+0.4-0.5 = Farklı field'lar ama benzer amaç
+0.2-0.3 = Az ortak özellik
+0.0-0.1 = Tamamen farklı detection
 
-KULLANICI KURALI:
-{input_text[:1500]}
+KULLANICI DETECTION:
+{input_detection}
 
-SIGMAHQ KURALI:
-{sigmahq_text[:1500]}
+SIGMAHQ DETECTION:
+{sigmahq_detection}
 
-Sadece sayısal benzerlik skoru ver (örnek: 0.75):
+Sadece sayısal skor ver (örnek: 0.75):
 """
 
         try:
@@ -179,24 +160,24 @@ Sadece sayısal benzerlik skoru ver (örnek: 0.75):
             logger.warning(f"⚠️ AI benzerlik hesaplama hatası: {e}")
             return 0.0
 
-    def generate_comparison_summary(self, input_rule: Dict[str, Any], similar_rule: Dict[str, Any], score: float) -> str:
-        """İki kural arasındaki benzerliğin AI özetini oluştur"""
+    def generate_detection_summary(self, input_rule: Dict[str, Any], similar_rule: Dict[str, Any], score: float) -> str:
+        """İki kuralın detection benzerliği hakkında AI özeti oluştur"""
         
-        input_text = self.format_rule_for_ai(input_rule)
-        similar_text = self.format_rule_for_ai(similar_rule)
+        input_detection = self.format_detection_for_ai(input_rule)
+        similar_detection = self.format_detection_for_ai(similar_rule)
         
         prompt = f"""
-İki Sigma kuralını karşılaştır ve benzerliklerini açıkla. 2-3 cümlelik özet yap.
+İki Sigma kuralının DETECTION mantığını karşılaştır. Neden benzer olduklarını 1-2 cümleyle açıkla.
 
-Benzerlik skoru: {score:.2f}
+Detection benzerlik skoru: {score:.2f}
 
-KULLANICI KURALI:
-{input_text[:800]}
+KULLANICI DETECTION:
+{input_detection}
 
-BENZER KURAL:
-{similar_text[:800]}
+BENZER KURAL DETECTION:
+{similar_detection}
 
-Neden benzer olduklarını açıkla (detection mantığı, MITRE technique, log source vb.):
+Hangi field'lar ortak, hangi değerler benzer? Kısa açıkla:
 """
 
         try:
@@ -225,103 +206,85 @@ Neden benzer olduklarını açıkla (detection mantığı, MITRE technique, log 
             logger.warning(f"⚠️ AI özet hatası: {e}")
             return "AI özet oluşturulamadı."
 
-    def find_most_similar_rules(self, input_rule: Dict[str, Any], threshold: float = 0.3, max_results: int = 10) -> List[Dict[str, Any]]:
-        """Verilen Sigma kuralına en benzer SigmaHQ kurallarını bul"""
+    def find_first_similar_rule(self, input_rule: Dict[str, Any], threshold: float = 0.4) -> Optional[Dict[str, Any]]:
+        """İlk benzer kuralı bul ve dur (hızlı ve basit)"""
         
         if not self.collection:
             logger.error("❌ MongoDB bağlantısı yok!")
-            return []
+            return None
         
-        # MongoDB'den tüm SigmaHQ kurallarını getir
-        logger.info("🔍 SigmaHQ kuralları MongoDB'den getiriliyor...")
+        logger.info("🔍 İlk benzer kural aranıyor (AI ile detection analizi)...")
+        
         try:
-            all_rules = list(self.collection.find())
-            logger.info(f"📊 {len(all_rules)} SigmaHQ kuralı bulundu")
-        except Exception as e:
-            logger.error(f"❌ MongoDB'den veri alınamadı: {e}")
-            return []
-        
-        if not all_rules:
-            logger.warning("⚠️ MongoDB'de kural bulunamadı!")
-            return []
-        
-        # Her kural ile benzerlik hesapla
-        similarity_results = []
-        
-        logger.info(f"🤖 AI ile {len(all_rules)} kural karşılaştırılıyor...")
-        
-        for idx, sigmahq_rule in enumerate(all_rules, 1):
-            if idx % 50 == 0:
-                logger.info(f"📊 İşlenen: {idx}/{len(all_rules)}")
+            # Detection odaklı filtreleme
+            rules_cursor = self.collection.find({"detection": {"$exists": True}})
             
-            try:
-                # AI ile benzerlik hesapla
-                similarity_score = self.calculate_content_similarity(input_rule, sigmahq_rule)
+            for idx, sigmahq_rule in enumerate(rules_cursor, 1):
+                if idx % 50 == 0:
+                    logger.info(f"📊 İşlenen: {idx} kural")
                 
-                if similarity_score >= threshold:
-                    similarity_results.append({
-                        'rule': sigmahq_rule,
-                        'similarity_score': similarity_score,
-                        'rule_id': str(sigmahq_rule.get('_id', '')),
-                        'title': sigmahq_rule.get('title', 'No title'),
-                        'description': sigmahq_rule.get('description', ''),
-                        'tags': sigmahq_rule.get('tags', []),
-                        'level': sigmahq_rule.get('level', ''),
-                        'author': sigmahq_rule.get('author', ''),
-                        'date': sigmahq_rule.get('date', '')
-                    })
-                
-                # Rate limiting
-                time.sleep(0.1)
-                
-            except Exception as e:
-                logger.warning(f"⚠️ Kural {idx} analiz hatası: {e}")
-                continue
-        
-        # Benzerlik skoruna göre sırala
-        similarity_results.sort(key=lambda x: x['similarity_score'], reverse=True)
-        
-        # En iyi sonuçlar için AI özeti oluştur
-        for result in similarity_results[:max_results]:
-            logger.info(f"📝 AI özeti oluşturuluyor: {result['title']}")
-            result['ai_summary'] = self.generate_comparison_summary(
-                input_rule, 
-                result['rule'], 
-                result['similarity_score']
-            )
-        
-        logger.info(f"✅ {len(similarity_results)} benzer kural bulundu")
-        return similarity_results[:max_results]
+                try:
+                    # AI ile detection benzerliği hesapla
+                    similarity_score = self.calculate_detection_similarity(input_rule, sigmahq_rule)
+                    
+                    if similarity_score >= threshold:
+                        logger.info(f"✅ Benzer kural bulundu: {similarity_score:.1%} detection benzerliği")
+                        
+                        # AI özeti oluştur
+                        ai_summary = self.generate_detection_summary(input_rule, sigmahq_rule, similarity_score)
+                        
+                        return {
+                            'rule': sigmahq_rule,
+                            'similarity_score': similarity_score,
+                            'rule_id': str(sigmahq_rule.get('_id', '')),
+                            'title': sigmahq_rule.get('title', 'No title'),
+                            'description': sigmahq_rule.get('description', ''),
+                            'tags': sigmahq_rule.get('tags', []),
+                            'level': sigmahq_rule.get('level', ''),
+                                                     'author': sigmahq_rule.get('author', ''),
+                             'date': sigmahq_rule.get('date', ''),
+                             'ai_summary': ai_summary
+                         }
+                    
+                    # Rate limiting
+                    time.sleep(0.05)
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Kural {idx} analiz hatası: {e}")
+                    continue
+            
+            logger.info("❌ Benzer kural bulunamadı")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Arama hatası: {e}")
+            return None
 
-    def display_results(self, input_rule: Dict[str, Any], similar_rules: List[Dict[str, Any]]):
-        """Sonuçları güzel formatta göster"""
+    def display_result(self, input_rule: Dict[str, Any], similar_rule: Optional[Dict[str, Any]]):
+        """Basit sonuç gösterimi (tek kural için)"""
         
-        print("\n" + "="*80)
-        print("🎯 KULLANICI KURALI:")
-        print("="*80)
+        print("\n" + "="*60)
+        print("🎯 KULLANICI KURALI (Detection Odaklı):")
+        print("="*60)
         print(f"📋 Başlık: {input_rule.get('title', 'No title')}")
-        print(f"📄 Açıklama: {input_rule.get('description', 'No description')}")
-        print(f"🏷️ Tags: {input_rule.get('tags', [])}")
-        print(f"📊 Level: {input_rule.get('level', 'Unknown')}")
+        print(f"📄 Açıklama: {input_rule.get('description', 'No description')[:80]}...")
         
-        if not similar_rules:
-            print("\n❌ Benzer kural bulunamadı!")
-            return
-        
-        print(f"\n🏆 EN BENZER {len(similar_rules)} SIGMAHQ KURALI:")
-        print("="*80)
-        
-        for i, result in enumerate(similar_rules, 1):
-            print(f"\n{i}. 📋 {result['title']}")
-            print(f"   🆔 Rule ID: {result['rule_id']}")
-            print(f"   🎯 Benzerlik Skoru: {result['similarity_score']:.1%}")
-            print(f"   📄 Açıklama: {result['description'][:100]}...")
-            print(f"   🏷️ Tags: {result['tags']}")
-            print(f"   📊 Level: {result['level']}")
-            print(f"   👤 Author: {result['author']}")
-            print(f"   📅 Date: {result['date']}")
-            print(f"   🤖 AI Karşılaştırma: {result.get('ai_summary', 'Özet oluşturulamadı')}")
-            print("-" * 60)
+        if similar_rule:
+            print(f"\n🏆 BENZER SIGMAHQ KURALI BULUNDU:")
+            print("="*60)
+            print(f"📋 Başlık: {similar_rule['title']}")
+            print(f"🆔 Rule ID: {similar_rule['rule_id']}")
+            print(f"🎯 Detection Benzerliği: {similar_rule['similarity_score']:.1%}")
+            print(f"📄 Açıklama: {similar_rule['description'][:80]}...")
+            print(f"🏷️ Tags: {similar_rule['tags'][:3]}...")  # İlk 3 tag
+            print(f"📊 Level: {similar_rule['level']}")
+            print(f"👤 Author: {similar_rule['author']}")
+            print(f"📅 Date: {similar_rule['date']}")
+            print(f"🤖 AI Detection Analizi: {similar_rule.get('ai_summary', 'Özet oluşturulamadı')}")
+        else:
+            print("\n❌ BENZER KURAL BULUNAMADI!")
+            print("💡 Threshold'u düşürmeyi deneyin (örn: 0.3)")
+            print("🔍 Sistem sadece detection mantığına odaklanıyor")
 
     def close_connection(self):
         """MongoDB bağlantısını kapat"""
@@ -385,27 +348,18 @@ def main():
             print("❌ Kural yüklenemedi!")
             return
         
-        # Benzerlik parametreleri
+        # Detection benzerlik parametresi
         try:
-            threshold = float(input("\n🎯 Minimum benzerlik eşiği (0.0-1.0) [varsayılan: 0.3]: ") or "0.3")
-            max_results = int(input("📊 Maksimum sonuç sayısı [varsayılan: 10]: ") or "10")
+            threshold = float(input("\n🎯 Minimum detection benzerlik eşiği (0.0-1.0) [varsayılan: 0.4]: ") or "0.4")
         except ValueError:
-            threshold = 0.3
-            max_results = 10
+            threshold = 0.4
         
-        # Benzerlik analizi yap
-        print(f"\n🤖 AI ile SigmaHQ kuralları analiz ediliyor (eşik: {threshold:.1f})...")
-        similar_rules = comparator.find_most_similar_rules(input_rule, threshold, max_results)
+        # Basit detection analizi
+        print(f"\n🤖 AI ile detection odaklı analiz başlıyor (eşik: {threshold:.1f})...")
+        similar_rule = comparator.find_first_similar_rule(input_rule, threshold)
         
-        # Sonuçları göster
-        comparator.display_results(input_rule, similar_rules)
-        
-        # Özet istatistikler
-        if similar_rules:
-            print(f"\n📈 ÖZET İSTATİSTİKLER:")
-            print(f"   🥇 En yüksek benzerlik: {similar_rules[0]['similarity_score']:.1%}")
-            print(f"   📊 Ortalama benzerlik: {sum(r['similarity_score'] for r in similar_rules) / len(similar_rules):.1%}")
-            print(f"   🔍 Toplam analiz edilen kural sayısı: MongoDB'deki tüm SigmaHQ kuralları")
+        # Sonucu göster
+        comparator.display_result(input_rule, similar_rule)
         
     except KeyboardInterrupt:
         print("\n⏹️ İşlem kullanıcı tarafından durduruldu")
