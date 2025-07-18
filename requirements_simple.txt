@@ -1,0 +1,19 @@
+# Basit ve Hızlı Sigma Benzerlik Analizi
+# Simple and Fast Sigma Similarity Analysis
+# AI YOK - Sadece algoritma / NO AI - Algorithm only
+
+# Core Dependencies
+pymongo>=4.6.0
+PyYAML>=6.0.1
+fastapi>=0.104.1
+uvicorn>=0.24.0
+pydantic>=2.5.0
+
+# Utilities - AI gerektirmez
+python-multipart>=0.0.6
+
+# Development (isteğe bağlı)
+pytest>=7.4.3
+
+# NOT: Bu basit versiyon Ollama/AI gerektirmez
+# Bu yüzden çok daha hızlı ve hafiftir

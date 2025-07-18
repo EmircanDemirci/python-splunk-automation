@@ -1,0 +1,35 @@
+title: Suspicious PowerShell Command Execution
+id: 7b8b8b8b-8b8b-8b8b-8b8b-8b8b8b8b8b8b
+description: Detects suspicious PowerShell command execution that might indicate malicious activity
+author: Security Team
+date: 2024/01/15
+modified: 2024/01/15
+status: experimental
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\powershell.exe'
+        ParentImage|endswith: '\cmd.exe'
+        CommandLine|contains:
+            - '-EncodedCommand'
+            - '-enc'
+            - 'DownloadString'
+            - 'System.Net.WebClient'
+            - 'iex'
+            - 'Invoke-Expression'
+            - 'bypass'
+            - '-windowstyle hidden'
+            - 'malware.exe'
+            - 'evil.dll'
+    condition: selection
+falsepositives:
+    - Legitimate PowerShell automation scripts
+    - System administration activities
+level: medium
+tags:
+    - attack.execution
+    - attack.t1059.001
+references:
+    - https://attack.mitre.org/techniques/T1059/001/
