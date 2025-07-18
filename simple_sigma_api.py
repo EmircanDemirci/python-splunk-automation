@@ -126,16 +126,36 @@ async def find_similar_rule(request: SimpleSigmaRequest):
         message = "Benzer kural bulunamadı"
         
         if similar_rule:
-            # Basit açıklama
+                         # Detection odaklı açıklama
             score = similar_rule['similarity_score']
+            
+            # Field ve value benzerliğini analiz et
+            input_fields = comparator.extract_field_names(input_rule.get('detection', {}))
+            sigmahq_fields = comparator.extract_field_names(similar_rule['rule'].get('detection', {}))
+            common_fields = input_fields.intersection(sigmahq_fields)
+            
+            input_values = comparator.extract_detection_values(input_rule.get('detection', {}))
+            sigmahq_values = comparator.extract_detection_values(similar_rule['rule'].get('detection', {}))
+            common_values = input_values.intersection(sigmahq_values)
+            
+            explanation_parts = []
+            
             if score > 0.8:
-                explanation = "Çok yüksek benzerlik - Neredeyse aynı kural!"
+                explanation_parts.append("Çok yüksek detection benzerliği")
             elif score > 0.6:
-                explanation = "Yüksek benzerlik - Benzer detection mantığı"
+                explanation_parts.append("Yüksek detection benzerliği")
             elif score > 0.4:
-                explanation = "Orta benzerlik - Aynı kategori, farklı yaklaşım"
+                explanation_parts.append("Orta detection benzerliği")
             else:
-                explanation = "Düşük benzerlik - Benzer özellikler mevcut"
+                explanation_parts.append("Düşük detection benzerliği")
+            
+            if common_fields:
+                explanation_parts.append(f"Ortak field: {', '.join(list(common_fields)[:2])}")
+            
+            if common_values:
+                explanation_parts.append(f"Ortak değer: {', '.join(list(common_values)[:1])}")
+            
+            explanation = " - ".join(explanation_parts)
             
             result = SimilarRuleResult(
                 rule_id=similar_rule['rule_id'],

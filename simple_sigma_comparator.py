@@ -54,56 +54,137 @@ class SimpleSigmaComparator:
             logger.error(f"❌ YAML text parse edilemedi: {e}")
             return {}
 
-    def extract_key_fields(self, rule: Dict[str, Any]) -> str:
-        """Kuraldan anahtar alanları çıkar (hızlı karşılaştırma için)"""
-        key_parts = []
+    def extract_detection_content(self, rule: Dict[str, Any]) -> str:
+        """Detection içeriğini çıkar ve temizle (ana odak noktası)"""
+        detection_parts = []
         
-        # Title benzerliği
-        if 'title' in rule:
-            key_parts.append(rule['title'].lower())
+        if 'detection' not in rule:
+            return ""
         
-        # Detection mantığını basitleştir
-        if 'detection' in rule:
-            detection = rule['detection']
-            if isinstance(detection, dict):
-                # Sadece selection kısmını al
-                if 'selection' in detection:
-                    selection = str(detection['selection']).lower()
-                    key_parts.append(selection)
+        detection = rule['detection']
+        if not isinstance(detection, dict):
+            return str(detection).lower()
         
-        # MITRE tags
-        if 'tags' in rule:
-            tags = rule['tags'] if isinstance(rule['tags'], list) else [rule['tags']]
-            key_parts.extend([tag.lower() for tag in tags])
+        # Selection kısmı (en önemli)
+        if 'selection' in detection:
+            selection = detection['selection']
+            if isinstance(selection, dict):
+                for key, value in selection.items():
+                    # Field adını temizle (Image|endswith -> image)
+                    clean_key = key.split('|')[0].lower()
+                    detection_parts.append(clean_key)
+                    
+                    # Value'ları ekle
+                    if isinstance(value, list):
+                        detection_parts.extend([str(v).lower() for v in value])
+                    else:
+                        detection_parts.append(str(value).lower())
+            else:
+                detection_parts.append(str(selection).lower())
         
-        # Log source
-        if 'logsource' in rule:
-            logsource = str(rule['logsource']).lower()
-            key_parts.append(logsource)
+        # Filter kısmı
+        if 'filter' in detection:
+            filter_part = detection['filter']
+            if isinstance(filter_part, dict):
+                for key, value in filter_part.items():
+                    clean_key = key.split('|')[0].lower()
+                    detection_parts.append(f"not_{clean_key}")
+                    if isinstance(value, list):
+                        detection_parts.extend([f"not_{str(v).lower()}" for v in value])
+                    else:
+                        detection_parts.append(f"not_{str(value).lower()}")
         
-        return " ".join(key_parts)
+        # Condition (ve, veya mantığı)
+        if 'condition' in detection:
+            condition = str(detection['condition']).lower()
+            detection_parts.append(condition)
+        
+        # Diğer selection'lar (selection1, selection2, vb.)
+        for key, value in detection.items():
+            if key.startswith('selection') and key != 'selection':
+                if isinstance(value, dict):
+                    for field, field_value in value.items():
+                        clean_field = field.split('|')[0].lower()
+                        detection_parts.append(clean_field)
+                        if isinstance(field_value, list):
+                            detection_parts.extend([str(v).lower() for v in field_value])
+                        else:
+                            detection_parts.append(str(field_value).lower())
+        
+        return " ".join(detection_parts)
 
-    def calculate_simple_similarity(self, input_rule: Dict[str, Any], sigmahq_rule: Dict[str, Any]) -> float:
-        """Basit string benzerliği hesapla (AI olmadan)"""
+    def extract_field_names(self, detection: Dict[str, Any]) -> set:
+        """Detection'dan field adlarını çıkar (Image, CommandLine, EventID, vb.)"""
+        fields = set()
         
-        input_text = self.extract_key_fields(input_rule)
-        sigmahq_text = self.extract_key_fields(sigmahq_rule)
+        for key, value in detection.items():
+            if key in ['selection', 'filter'] or key.startswith('selection'):
+                if isinstance(value, dict):
+                    for field_name in value.keys():
+                        # Pipe'ı temizle: Image|endswith -> Image
+                        clean_field = field_name.split('|')[0].lower()
+                        fields.add(clean_field)
         
-        if not input_text or not sigmahq_text:
+        return fields
+
+    def extract_detection_values(self, detection: Dict[str, Any]) -> set:
+        """Detection'dan değerleri çıkar (powershell.exe, cmd.exe, vb.)"""
+        values = set()
+        
+        for key, value in detection.items():
+            if key in ['selection', 'filter'] or key.startswith('selection'):
+                if isinstance(value, dict):
+                    for field_value in value.values():
+                        if isinstance(field_value, list):
+                            for item in field_value:
+                                # Dosya uzantısı veya önemli string'leri al
+                                item_str = str(item).lower()
+                                if any(ext in item_str for ext in ['.exe', '.dll', '.ps1', '.bat', '.cmd']):
+                                    values.add(item_str)
+                                elif len(item_str) > 3:  # Kısa string'leri filtrele
+                                    values.add(item_str)
+                        else:
+                            value_str = str(field_value).lower()
+                            if len(value_str) > 3:
+                                values.add(value_str)
+        
+        return values
+
+    def calculate_detection_similarity(self, input_rule: Dict[str, Any], sigmahq_rule: Dict[str, Any]) -> float:
+        """Detection mantığı benzerliği hesapla (ana odak)"""
+        
+        input_detection = self.extract_detection_content(input_rule)
+        sigmahq_detection = self.extract_detection_content(sigmahq_rule)
+        
+        if not input_detection or not sigmahq_detection:
             return 0.0
         
-        # SequenceMatcher ile hızlı benzerlik
-        similarity = SequenceMatcher(None, input_text, sigmahq_text).ratio()
+        # Ana benzerlik: Detection içeriği
+        detection_similarity = SequenceMatcher(None, input_detection, sigmahq_detection).ratio()
         
-        # MITRE tag bonus
-        input_tags = set(input_rule.get('tags', []))
-        sigmahq_tags = set(sigmahq_rule.get('tags', []))
+        # Bonus 1: Aynı field'lar kullanılıyor mu? (Image, CommandLine, EventID, vb.)
+        input_fields = self.extract_field_names(input_rule.get('detection', {}))
+        sigmahq_fields = self.extract_field_names(sigmahq_rule.get('detection', {}))
         
-        if input_tags and sigmahq_tags:
-            tag_overlap = len(input_tags.intersection(sigmahq_tags)) / len(input_tags.union(sigmahq_tags))
-            similarity = (similarity * 0.7) + (tag_overlap * 0.3)
+        field_bonus = 0.0
+        if input_fields and sigmahq_fields:
+            common_fields = input_fields.intersection(sigmahq_fields)
+            field_bonus = len(common_fields) / len(input_fields.union(sigmahq_fields))
         
-        return similarity
+        # Bonus 2: Aynı value'lar var mı? (powershell.exe, cmd.exe, vb.)
+        input_values = self.extract_detection_values(input_rule.get('detection', {}))
+        sigmahq_values = self.extract_detection_values(sigmahq_rule.get('detection', {}))
+        
+        value_bonus = 0.0
+        if input_values and sigmahq_values:
+            common_values = input_values.intersection(sigmahq_values)
+            if common_values:
+                value_bonus = len(common_values) / len(input_values.union(sigmahq_values))
+        
+        # Final score: %70 detection, %20 field, %10 value
+        final_score = (detection_similarity * 0.7) + (field_bonus * 0.2) + (value_bonus * 0.1)
+        
+        return min(1.0, final_score)
 
     def find_first_similar_rule(self, input_rule: Dict[str, Any], threshold: float = 0.4) -> Optional[Dict[str, Any]]:
         """İlk benzer kuralı bul ve dur (çok hızlı)"""
@@ -115,26 +196,38 @@ class SimpleSigmaComparator:
         logger.info("🔍 İlk benzer kural aranıyor...")
         
         try:
-            # Önce MITRE tag'e göre filtreleme yap (hızlandırma)
-            input_tags = input_rule.get('tags', [])
+            # Önce detection field'larına göre akıllı filtreleme
+            input_fields = self.extract_field_names(input_rule.get('detection', {}))
             
-            if input_tags:
-                # Tag'i olan kuralları önce ara
-                query = {"tags": {"$in": input_tags}}
-                logger.info(f"🏷️ MITRE tag filtresi: {input_tags}")
-            else:
-                # Tüm kuralları ara
-                query = {}
+            # İlk arama: Ana field'lara göre filtrele (daha hızlı)
+            query = {}
+            if input_fields:
+                # Detection'da kullanılan field'ları MongoDB'de ara
+                field_queries = []
+                for field in input_fields:
+                    # MongoDB'de field adı geçen kuralları bul
+                    field_queries.append({f"detection.selection.{field}": {"$exists": True}})
+                    field_queries.append({f"detection.selection.{field}|endswith": {"$exists": True}})
+                    field_queries.append({f"detection.selection.{field}|contains": {"$exists": True}})
+                
+                if field_queries:
+                    query = {"$or": field_queries}
+                    logger.info(f"🔍 Detection field filtresi: {list(input_fields)}")
+            
+            # Eğer field filtresi yoksa, en azından detection'ı olan kuralları al
+            if not query:
+                query = {"detection": {"$exists": True}}
+                logger.info("📋 Tüm detection'lı kurallar aranıyor...")
             
             rules_cursor = self.collection.find(query)
             
             for sigmahq_rule in rules_cursor:
                 try:
-                    # Hızlı benzerlik hesapla
-                    similarity_score = self.calculate_simple_similarity(input_rule, sigmahq_rule)
+                    # Detection odaklı benzerlik hesapla
+                    similarity_score = self.calculate_detection_similarity(input_rule, sigmahq_rule)
                     
                     if similarity_score >= threshold:
-                        logger.info(f"✅ Benzer kural bulundu: {similarity_score:.1%} benzerlik")
+                        logger.info(f"✅ Benzer kural bulundu: {similarity_score:.1%} detection benzerliği")
                         
                         return {
                             'rule': sigmahq_rule,
@@ -152,10 +245,10 @@ class SimpleSigmaComparator:
                     logger.warning(f"⚠️ Kural analiz hatası: {e}")
                     continue
             
-            # MITRE tag filtresinde bulunamadıysa, tüm kuralları dene
-            if input_tags:
-                logger.info("🔍 MITRE tag filtresi sonuçsuz, tüm kurallar aranıyor...")
-                return self.find_first_similar_rule(input_rule, threshold)
+            # Field filtresinde bulunamadıysa, threshold'u düşürüp tekrar dene
+            if input_fields and threshold > 0.2:
+                logger.info(f"🔍 Field filtresi sonuçsuz, threshold düşürülüyor: {threshold} -> {threshold-0.1}")
+                return self.find_first_similar_rule(input_rule, threshold - 0.1)
             
             logger.info("❌ Benzer kural bulunamadı")
             return None
@@ -186,18 +279,37 @@ class SimpleSigmaComparator:
             print(f"👤 Author: {similar_rule['author']}")
             print(f"📅 Date: {similar_rule['date']}")
             
-            # Basit benzerlik açıklaması
+            # Detection odaklı açıklama
             score = similar_rule['similarity_score']
-            if score > 0.8:
-                explanation = "🔥 Çok yüksek benzerlik - Neredeyse aynı kural!"
-            elif score > 0.6:
-                explanation = "✅ Yüksek benzerlik - Benzer detection mantığı"
-            elif score > 0.4:
-                explanation = "📊 Orta benzerlik - Aynı kategori, farklı yaklaşım"
-            else:
-                explanation = "🔍 Düşük benzerlik - Benzer özellikler mevcut"
             
-            print(f"🤖 Açıklama: {explanation}")
+            # Field ve value benzerliğini kontrol et
+            input_fields = self.extract_field_names(input_rule.get('detection', {}))
+            sigmahq_fields = self.extract_field_names(similar_rule['rule'].get('detection', {}))
+            common_fields = input_fields.intersection(sigmahq_fields)
+            
+            input_values = self.extract_detection_values(input_rule.get('detection', {}))
+            sigmahq_values = self.extract_detection_values(similar_rule['rule'].get('detection', {}))
+            common_values = input_values.intersection(sigmahq_values)
+            
+            explanation_parts = []
+            
+            if score > 0.8:
+                explanation_parts.append("🔥 Çok yüksek benzerlik")
+            elif score > 0.6:
+                explanation_parts.append("✅ Yüksek benzerlik")
+            elif score > 0.4:
+                explanation_parts.append("📊 Orta benzerlik")
+            else:
+                explanation_parts.append("🔍 Düşük benzerlik")
+            
+            if common_fields:
+                explanation_parts.append(f"Ortak field'lar: {', '.join(list(common_fields)[:3])}")
+            
+            if common_values:
+                explanation_parts.append(f"Ortak değerler: {', '.join(list(common_values)[:2])}")
+            
+            explanation = " - ".join(explanation_parts)
+            print(f"🤖 Detection Analizi: {explanation}")
         else:
             print("\n❌ BENZER KURAL BULUNAMADI!")
             print("💡 Threshold'u düşürmeyi deneyin (örn: 0.3)")
