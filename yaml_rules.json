@@ -1,0 +1,58 @@
+[
+  {
+    "id": "rule_1",
+    "name": "Web Server Konfigürasyonu",
+    "yaml_content": "server:\n  host: 0.0.0.0\n  port: 8080\n  ssl: true\n  timeout: 30\ndatabase:\n  type: mysql\n  host: localhost\n  port: 3306\n  name: webapp_db\nlogging:\n  level: info\n  format: json",
+    "description": "Web sunucu konfigürasyon dosyası",
+    "tags": [
+      "web",
+      "server",
+      "config"
+    ]
+  },
+  {
+    "id": "rule_2",
+    "name": "Docker Compose Yapılandırması",
+    "yaml_content": "version: '3.8'\nservices:\n  web:\n    image: nginx:latest\n    ports:\n      - \"80:80\"\n      - \"443:443\"\n    volumes:\n      - ./html:/usr/share/nginx/html\n  database:\n    image: mysql:8.0\n    environment:\n      MYSQL_ROOT_PASSWORD: secret\n      MYSQL_DATABASE: myapp\n    ports:\n      - \"3306:3306\" ",
+    "description": "Docker Compose servis tanımları",
+    "tags": [
+      "docker",
+      "compose",
+      "containers"
+    ]
+  },
+  {
+    "id": "rule_3",
+    "name": "Kubernetes Deployment",
+    "yaml_content": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-app\n  labels:\n    app: web-app\nspec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: web-app\n  template:\n    metadata:\n      labels:\n        app: web-app\n    spec:\n      containers:\n      - name: web-container\n        image: nginx:1.20\n        ports:\n        - containerPort: 80\n        resources:\n          requests:\n            memory: \"64Mi\"\n            cpu: \"250m\"\n          limits:\n            memory: \"128Mi\"\n            cpu: \"500m\" ",
+    "description": "Kubernetes deployment konfigürasyonu",
+    "tags": [
+      "kubernetes",
+      "deployment",
+      "containers"
+    ]
+  },
+  {
+    "id": "rule_4",
+    "name": "CI/CD Pipeline",
+    "yaml_content": "name: Build and Deploy\non:\n  push:\n    branches: [ main ]\n  pull_request:\n    branches: [ main ]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n    - uses: actions/checkout@v2\n    - name: Set up Python\n      uses: actions/setup-python@v2\n      with:\n        python-version: 3.9\n    - name: Install dependencies\n      run: |\n        python -m pip install --upgrade pip\n        pip install -r requirements.txt\n    - name: Run tests\n      run: |\n        python -m pytest\n    - name: Deploy\n      if: github.ref == 'refs/heads/main'\n      run: |\n        echo \"Deploying to production\" ",
+    "description": "GitHub Actions CI/CD pipeline",
+    "tags": [
+      "ci",
+      "cd",
+      "github",
+      "actions"
+    ]
+  },
+  {
+    "id": "rule_5",
+    "name": "Monitoring Konfigürasyonu",
+    "yaml_content": "global:\n  scrape_interval: 15s\n  evaluation_interval: 15s\nrule_files:\n  - \"rules/*.yml\"\nscrape_configs:\n  - job_name: 'prometheus'\n    static_configs:\n      - targets: ['localhost:9090']\n  - job_name: 'web-app'\n    static_configs:\n      - targets: ['localhost:8080']\n    scrape_interval: 5s\n    metrics_path: /metrics\nalerting:\n  alertmanagers:\n    - static_configs:\n        - targets:\n          - localhost:9093 ",
+    "description": "Prometheus monitoring konfigürasyonu",
+    "tags": [
+      "monitoring",
+      "prometheus",
+      "metrics"
+    ]
+  }
+]
